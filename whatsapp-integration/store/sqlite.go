@@ -7,6 +7,7 @@ import (
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
+	"example.com/whatsapp-integration/migrations"
 )
 
 type SQLiteStore struct {
@@ -22,6 +23,11 @@ func NewSQLiteStore(cfg Config) (*SQLiteStore, error) {
 
 	// Configurar SQLite
 	db.SetMaxOpenConns(1) // SQLite solo soporta una conexión escribiendo a la vez
+
+	// Ejecutar migraciones
+	if err := migrations.RunSQLiteMigrations(db); err != nil {
+		return nil, fmt.Errorf("error ejecutando migraciones de SQLite: %w", err)
+	}
 
 	return &SQLiteStore{db: db}, nil
 }
