@@ -30,6 +30,8 @@ type Pedido struct {
 	ClienteID         int
 	TipoServicio      string // "estacionario" o "cilindro"
 	HorarioPreferido  string // "Mañana", "Tarde"
+	Latitud           float64
+	Longitud          float64
 	CantidadLitros    float64
 	CantidadDinero    float64
 	PrecioUnitario    float64

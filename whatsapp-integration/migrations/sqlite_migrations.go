@@ -30,6 +30,8 @@ const (
 		cliente_id INTEGER,
 		tipo_servicio TEXT,
 		horario_preferido TEXT,
+		latitud REAL,
+		longitud REAL,
 		cantidad_litros REAL,
 		cantidad_dinero REAL,
 		precio_unitario REAL,

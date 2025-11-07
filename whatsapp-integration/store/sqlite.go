@@ -161,7 +161,7 @@ func (s *SQLiteStore) ActualizarEstadoCliente(ctx context.Context, telefono, est
 func (s *SQLiteStore) GetUltimoPedido(ctx context.Context, clienteID int) (*Pedido, error) {
 	query := `
 		SELECT id, cliente_id, tipo_servicio, cantidad_litros, cantidad_dinero,
-			   metodo_pago, direccion, color_fachada, estado, horario_preferido, created_at, updated_at
+			   metodo_pago, direccion, color_fachada, estado, horario_preferido, latitud, longitud, created_at, updated_at
 		FROM pedidos 
 		WHERE cliente_id = ?
 		ORDER BY created_at DESC
@@ -181,6 +181,8 @@ func (s *SQLiteStore) GetUltimoPedido(ctx context.Context, clienteID int) (*Pedi
 		&pedido.ColorFachada,
 		&pedido.Estado,
 		&pedido.HorarioPreferido,
+		&pedido.Latitud,
+		&pedido.Longitud,
 		&pedido.CreatedAt,
 		&pedido.UpdatedAt,
 	)
@@ -197,8 +199,8 @@ func (s *SQLiteStore) CrearPedido(ctx context.Context, pedido *Pedido) error {
 	query := `
 		INSERT INTO pedidos (
 			cliente_id, tipo_servicio, cantidad_litros, cantidad_dinero,
-			metodo_pago, direccion, color_fachada, estado, horario_preferido
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			metodo_pago, direccion, color_fachada, estado, horario_preferido, latitud, longitud
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	result, err := s.db.ExecContext(ctx, query,
 		pedido.ClienteID,
@@ -210,6 +212,8 @@ func (s *SQLiteStore) CrearPedido(ctx context.Context, pedido *Pedido) error {
 		pedido.ColorFachada,
 		pedido.Estado,
 		pedido.HorarioPreferido,
+		pedido.Latitud,
+		pedido.Longitud,
 	)
 	if err != nil {
 		return fmt.Errorf("error insertando pedido: %w", err)
@@ -226,7 +230,7 @@ func (s *SQLiteStore) CrearPedido(ctx context.Context, pedido *Pedido) error {
 func (s *SQLiteStore) GetUltimoPedidoActivo(ctx context.Context, clienteID int) (*Pedido, error) {
 	query := `
 		SELECT id, cliente_id, tipo_servicio, cantidad_litros, cantidad_dinero,
-			   metodo_pago, direccion, color_fachada, estado, horario_preferido, created_at, updated_at
+			   metodo_pago, direccion, color_fachada, estado, horario_preferido, latitud, longitud, created_at, updated_at
 		FROM pedidos
 		WHERE cliente_id = ? AND estado NOT IN ('entregado', 'cancelado')
 		ORDER BY created_at DESC
@@ -246,6 +250,8 @@ func (s *SQLiteStore) GetUltimoPedidoActivo(ctx context.Context, clienteID int) 
 		&pedido.ColorFachada,
 		&pedido.Estado,
 		&pedido.HorarioPreferido,
+		&pedido.Latitud,
+		&pedido.Longitud,
 		&pedido.CreatedAt,
 		&pedido.UpdatedAt,
 	)
@@ -261,7 +267,7 @@ func (s *SQLiteStore) GetUltimoPedidoActivo(ctx context.Context, clienteID int) 
 func (s *SQLiteStore) GetPedidosPorEstado(ctx context.Context, estado string) ([]*Pedido, error) {
 	query := `
 		SELECT id, cliente_id, tipo_servicio, cantidad_litros, cantidad_dinero,
-			   metodo_pago, direccion, color_fachada, estado, horario_preferido, created_at, updated_at
+			   metodo_pago, direccion, color_fachada, estado, horario_preferido, latitud, longitud, created_at, updated_at
 		FROM pedidos
 		WHERE estado = ?`
 
@@ -285,6 +291,8 @@ func (s *SQLiteStore) GetPedidosPorEstado(ctx context.Context, estado string) ([
 			&pedido.ColorFachada,
 			&pedido.Estado,
 			&pedido.HorarioPreferido,
+			&pedido.Latitud,
+			&pedido.Longitud,
 			&pedido.CreatedAt,
 			&pedido.UpdatedAt,
 		)
