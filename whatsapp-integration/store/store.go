@@ -19,6 +19,7 @@ type Cliente struct {
 	CodigoRojo         bool
 	Strikes            int
 	Bloqueado          bool
+	Categoria          string
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
 }
@@ -28,6 +29,7 @@ type Pedido struct {
 	ID                int
 	ClienteID         int
 	TipoServicio      string // "estacionario" o "cilindro"
+	HorarioPreferido  string // "Mañana", "Tarde"
 	CantidadLitros    float64
 	CantidadDinero    float64
 	PrecioUnitario    float64

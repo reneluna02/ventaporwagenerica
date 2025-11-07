@@ -19,6 +19,7 @@ const (
 		codigo_rojo BOOLEAN DEFAULT FALSE,
 		strikes INTEGER DEFAULT 0,
 		bloqueado BOOLEAN DEFAULT FALSE,
+		categoria TEXT DEFAULT 'Normal',
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 	);`
@@ -28,6 +29,7 @@ const (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		cliente_id INTEGER,
 		tipo_servicio TEXT,
+		horario_preferido TEXT,
 		cantidad_litros REAL,
 		cantidad_dinero REAL,
 		precio_unitario REAL,

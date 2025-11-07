@@ -46,6 +46,7 @@ const (
 	EstadoConfirmandoPedidoFinal = "CONFIRMANDO_PEDIDO_FINAL"
 	EstadoEsperandoColorFachada = "ESPERANDO_COLOR_FACHADA"
 	EstadoEsperandoColorPuerta = "ESPERANDO_COLOR_PUERTA"
+	EstadoEsperandoHorarioPremium = "ESPERANDO_HORARIO_PREMIUM"
 
 	// Estados especiales
 	EstadoReportandoSello      = "REPORTANDO_SELLO"               // Cliente reporta sello violado
@@ -189,6 +190,9 @@ func (sm *StateMachine) handleState(ctx context.Context, telefono, mensaje, esta
 
 	case EstadoEsperandoColorPuerta:
 		err = sm.handleColorPuerta(ctx, telefono, mensaje)
+
+	case EstadoEsperandoHorarioPremium:
+		err = sm.handleHorarioPremium(ctx, telefono, mensaje)
 	
 	case EstadoReportandoSello:
 		err = sm.handleReporteSello(ctx, telefono, mensaje)
@@ -744,7 +748,11 @@ func (sm *StateMachine) handleConfirmacionDireccion(ctx context.Context, telefon
 	// Si ya estamos en el estado, procesamos la respuesta.
 	switch mensaje {
 	case "1":
-		// La dirección es correcta, procedemos a la confirmación final del pedido.
+		// La dirección es correcta. Verificar si el cliente es Premium.
+		if sm.session.ClienteActual.Categoria == "Premium" {
+			return sm.handleHorarioPremium(ctx, telefono, "")
+		}
+		// Si no es Premium, ir a la confirmación final.
 		return sm.handleConfirmacionFinal(ctx, telefono)
 	case "2":
 		// El usuario quiere cambiar la dirección, pedimos más detalles.
@@ -799,6 +807,60 @@ func (sm *StateMachine) handleColorPuerta(ctx context.Context, telefono, mensaje
 
 // AsignarStrike aplica un strike a un cliente y le notifica.
 // Si el cliente alcanza los 3 strikes, es bloqueado.
+func (sm *StateMachine) handleHorarioPremium(ctx context.Context, telefono, mensaje string) error {
+	// Si el estado no es el de esperar horario, hacemos la pregunta.
+	if sm.session.ClienteActual.EstadoConversacion != EstadoEsperandoHorarioPremium {
+		msg := "Como cliente Premium, puedes elegir tu horario de entrega.\n\n¿Prefieres:\n1. Mañana (9am - 1pm)\n2. Tarde (2pm - 6pm)"
+		if err := sm.sender.SendMessage(telefono, msg); err != nil {
+			return err
+		}
+		return sm.actualizarEstado(ctx, telefono, EstadoEsperandoHorarioPremium)
+	}
+
+	// Si ya estamos en el estado, procesamos la respuesta.
+	switch mensaje {
+	case "1":
+		sm.session.PedidoEnCurso.HorarioPreferido = "Mañana"
+	case "2":
+		sm.session.PedidoEnCurso.HorarioPreferido = "Tarde"
+	default:
+		sm.sender.SendMessage(telefono, "Opción no válida. Por favor, elige 1 para Mañana o 2 para Tarde.")
+		return nil
+	}
+
+	// Siguiente paso: confirmación final.
+	return sm.handleConfirmacionFinal(ctx, telefono)
+}
+
+func (sm *StateMachine) PromocionarClienteAPremium(ctx context.Context, telefono string) error {
+	cliente, err := sm.store.GetClientePorTelefono(ctx, telefono)
+	if err != nil {
+		return fmt.Errorf("no se pudo encontrar al cliente %s para promocionarlo: %w", telefono, err)
+	}
+	if cliente == nil {
+		return fmt.Errorf("intento de promocionar a un cliente no existente: %s", telefono)
+	}
+
+	// Si ya es Premium, no hacer nada.
+	if cliente.Categoria == "Premium" {
+		return nil
+	}
+
+	cliente.Categoria = "Premium"
+
+	if err := sm.store.ActualizarCliente(ctx, cliente); err != nil {
+		return fmt.Errorf("error al actualizar al cliente %s a Premium: %w", telefono, err)
+	}
+
+	// Notificar al cliente de su nuevo estatus.
+	msg := "¡Felicidades! Gracias a tu lealtad, has sido ascendido a Cliente Premium. A partir de ahora, podrás elegir un horario de entrega preferido para tus pedidos."
+	if err := sm.sender.SendMessage(telefono, msg); err != nil {
+		fmt.Printf("Error al enviar mensaje de promoción a %s: %v\n", telefono, err)
+	}
+
+	return nil
+}
+
 func (sm *StateMachine) AsignarStrike(ctx context.Context, telefono string) error {
 	cliente, err := sm.store.GetClientePorTelefono(ctx, telefono)
 	if err != nil {

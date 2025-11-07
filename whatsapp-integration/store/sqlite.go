@@ -43,7 +43,7 @@ func (s *SQLiteStore) Close() error {
 func (s *SQLiteStore) GetClientePorTelefono(ctx context.Context, telefono string) (*Cliente, error) {
 	query := `
 		SELECT id, numero_telefono, nombre, apellido_paterno, apellido_materno, 
-			   estado_conversacion, strikes, bloqueado, created_at, updated_at
+			   estado_conversacion, strikes, bloqueado, categoria, created_at, updated_at
 		FROM clientes 
 		WHERE numero_telefono = ?`
 
@@ -59,6 +59,7 @@ func (s *SQLiteStore) GetClientePorTelefono(ctx context.Context, telefono string
 		&cliente.EstadoConversacion,
 		&cliente.Strikes,
 		&cliente.Bloqueado,
+		&cliente.Categoria,
 		&cliente.CreatedAt,
 		&cliente.UpdatedAt,
 	)
@@ -106,7 +107,7 @@ func (s *SQLiteStore) ActualizarCliente(ctx context.Context, cliente *Cliente) e
 		UPDATE clientes
 		SET nombre = ?, apellido_paterno = ?, apellido_materno = ?,
 			color_puerta = ?, color_fachada = ?, codigo_rojo = ?, estado_conversacion = ?,
-			strikes = ?, bloqueado = ?, updated_at = CURRENT_TIMESTAMP
+			strikes = ?, bloqueado = ?, categoria = ?, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?`
 
 	result, err := s.db.ExecContext(ctx, query,
@@ -119,6 +120,7 @@ func (s *SQLiteStore) ActualizarCliente(ctx context.Context, cliente *Cliente) e
 		cliente.EstadoConversacion,
 		cliente.Strikes,
 		cliente.Bloqueado,
+		cliente.Categoria,
 		cliente.ID,
 	)
 	if err != nil {
@@ -159,7 +161,7 @@ func (s *SQLiteStore) ActualizarEstadoCliente(ctx context.Context, telefono, est
 func (s *SQLiteStore) GetUltimoPedido(ctx context.Context, clienteID int) (*Pedido, error) {
 	query := `
 		SELECT id, cliente_id, tipo_servicio, cantidad_litros, cantidad_dinero,
-			   metodo_pago, direccion, color_fachada, estado, created_at, updated_at
+			   metodo_pago, direccion, color_fachada, estado, horario_preferido, created_at, updated_at
 		FROM pedidos 
 		WHERE cliente_id = ?
 		ORDER BY created_at DESC
@@ -178,6 +180,7 @@ func (s *SQLiteStore) GetUltimoPedido(ctx context.Context, clienteID int) (*Pedi
 		&pedido.Direccion,
 		&pedido.ColorFachada,
 		&pedido.Estado,
+		&pedido.HorarioPreferido,
 		&pedido.CreatedAt,
 		&pedido.UpdatedAt,
 	)
@@ -194,8 +197,8 @@ func (s *SQLiteStore) CrearPedido(ctx context.Context, pedido *Pedido) error {
 	query := `
 		INSERT INTO pedidos (
 			cliente_id, tipo_servicio, cantidad_litros, cantidad_dinero,
-			metodo_pago, direccion, color_fachada, estado
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+			metodo_pago, direccion, color_fachada, estado, horario_preferido
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	result, err := s.db.ExecContext(ctx, query,
 		pedido.ClienteID,
@@ -206,6 +209,7 @@ func (s *SQLiteStore) CrearPedido(ctx context.Context, pedido *Pedido) error {
 		pedido.Direccion,
 		pedido.ColorFachada,
 		pedido.Estado,
+		pedido.HorarioPreferido,
 	)
 	if err != nil {
 		return fmt.Errorf("error insertando pedido: %w", err)
