@@ -93,25 +93,21 @@ func (sm *StateMachine) ProcessMessage(ctx context.Context, telefono, mensaje st
 		return fmt.Errorf("error buscando cliente: %w", err)
 	}
 	if cliente == nil {
-		// Nuevo cliente: solicitar foto de la casa o, si no, colores.
+		// Nuevo cliente: solicitar el nombre.
 		cliente = &store.Cliente{
 			NumeroTelefono:    telefono,
-			EstadoConversacion: EstadoEsperandoFotoCasa,
+			EstadoConversacion: EstadoEsperandoNombre,
 		}
 		if err := sm.store.CrearCliente(ctx, cliente); err != nil {
 			return fmt.Errorf("error creando cliente: %w", err)
 		}
 
 		sm.session.ClienteActual = cliente
-		// Preguntar por foto de la casa en el primer registro
-		msg := "Para ayudar al repartidor, ¿puedes enviar una foto de tu casa?\n\n1. Sí, enviaré una foto\n2. No, prefiero describir colores"
+		msg := "¡Bienvenido! Para registrarte, por favor escribe tu nombre completo, empezando por tu apellido paterno. Ejemplo: Pérez López Juan."
 		if err := sm.sender.SendMessage(telefono, msg); err != nil {
-			return fmt.Errorf("error enviando pregunta de foto: %w", err)
+			return fmt.Errorf("error enviando saludo a nuevo cliente: %w", err)
 		}
-		// Actualizar estado del cliente y terminar (esperamos la respuesta)
-		if err := sm.actualizarEstado(ctx, telefono, EstadoEsperandoFotoCasa); err != nil {
-			return fmt.Errorf("error actualizando estado cliente: %w", err)
-		}
+		// El estado ya está puesto, solo queda esperar la respuesta del usuario.
 		return nil
 	}
 
@@ -253,6 +249,28 @@ func (sm *StateMachine) handleOpcionInicial(ctx context.Context, telefono, mensa
 		sm.sender.SendMessage(telefono, "Opción no válida. Por favor elige 1, 2 o 3.")
 		return nil
 	}
+}
+
+func (sm *StateMachine) handleNombre(ctx context.Context, telefono, mensaje string) error {
+	partes := strings.Split(mensaje, " ")
+	if len(partes) < 2 {
+		sm.sender.SendMessage(telefono, "Por favor, ingresa al menos un nombre y un apellido.")
+		return nil
+	}
+
+	cliente := sm.session.ClienteActual
+	cliente.Nombre = partes[len(partes)-1] // El último elemento es el nombre
+	cliente.ApellidoPaterno = partes[0]
+	if len(partes) > 2 {
+		cliente.ApellidoMaterno = strings.Join(partes[1:len(partes)-1], " ")
+	}
+
+	if err := sm.store.ActualizarCliente(ctx, cliente); err != nil {
+		return fmt.Errorf("error actualizando nombre del cliente: %w", err)
+	}
+
+	sm.sender.SendMessage(telefono, "¡Gracias! Tus datos han sido guardados.")
+	return sm.handleInicial(ctx, telefono) // Volver al menú principal
 }
 
 func (sm *StateMachine) handleTipoServicio(ctx context.Context, telefono, mensaje string) error {
