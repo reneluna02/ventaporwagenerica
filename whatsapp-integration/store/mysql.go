@@ -219,6 +219,45 @@ func (s *MySQLStore) CrearPedido(ctx context.Context, pedido *Pedido) error {
 	return nil
 }
 
+func (s *MySQLStore) GetPedidosPorEstado(ctx context.Context, estado string) ([]*Pedido, error) {
+	query := `
+		SELECT id, cliente_id, tipo_servicio, cantidad_litros, cantidad_dinero,
+			   metodo_pago, direccion, color_fachada, estado, horario_preferido, created_at, updated_at
+		FROM pedidos
+		WHERE estado = ?`
+
+	rows, err := s.db.QueryContext(ctx, query, estado)
+	if err != nil {
+		return nil, fmt.Errorf("error consultando pedidos por estado: %w", err)
+	}
+	defer rows.Close()
+
+	var pedidos []*Pedido
+	for rows.Next() {
+		pedido := &Pedido{}
+		err := rows.Scan(
+			&pedido.ID,
+			&pedido.ClienteID,
+			&pedido.TipoServicio,
+			&pedido.CantidadLitros,
+			&pedido.CantidadDinero,
+			&pedido.MetodoPago,
+			&pedido.Direccion,
+			&pedido.ColorFachada,
+			&pedido.Estado,
+			&pedido.HorarioPreferido,
+			&pedido.CreatedAt,
+			&pedido.UpdatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("error escaneando pedido: %w", err)
+		}
+		pedidos = append(pedidos, pedido)
+	}
+
+	return pedidos, nil
+}
+
 func (s *MySQLStore) ActualizarPedido(ctx context.Context, pedido *Pedido) error {
 	query := `
 		UPDATE pedidos 

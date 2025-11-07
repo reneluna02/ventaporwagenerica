@@ -861,6 +861,44 @@ func (sm *StateMachine) PromocionarClienteAPremium(ctx context.Context, telefono
 	return nil
 }
 
+// GenerarRutaDiaria simula el corte de las 5:00 AM para generar la ruta del día.
+func (sm *StateMachine) GenerarRutaDiaria(ctx context.Context) {
+	pedidos, err := sm.store.GetPedidosPorEstado(ctx, "pendiente")
+	if err != nil {
+		fmt.Printf("Error al generar la ruta diaria: %v\n", err)
+		return
+	}
+
+	if len(pedidos) == 0 {
+		fmt.Println("No hay pedidos pendientes para la ruta de hoy.")
+		return
+	}
+
+	fmt.Printf("--- CORTE 5:00 AM - RUTA DEL DÍA ---\n")
+	for _, p := range pedidos {
+		fmt.Printf("  - Pedido #%d | Cliente ID: %d | Tipo: %s | Dirección: %s\n", p.ID, p.ClienteID, p.TipoServicio, p.Direccion)
+	}
+	fmt.Printf("-------------------------------------\n")
+}
+
+// NotificarLlegadaAPlanta envía un mensaje al cliente informando que su cilindro llegó a la planta.
+func (sm *StateMachine) NotificarLlegadaAPlanta(ctx context.Context, telefono string) error {
+	msg := "Te confirmamos que tu cilindro ha llegado a nuestra planta para ser recargado."
+	if err := sm.sender.SendMessage(telefono, msg); err != nil {
+		return fmt.Errorf("error al enviar notificación de llegada a planta a %s: %w", telefono, err)
+	}
+	return nil
+}
+
+// NotificarInicioDeRecarga envía un mensaje al cliente informando que su cilindro está siendo rellenado.
+func (sm *StateMachine) NotificarInicioDeRecarga(ctx context.Context, telefono string) error {
+	msg := "¡Buenas noticias! Tu cilindro está siendo rellenado en este momento."
+	if err := sm.sender.SendMessage(telefono, msg); err != nil {
+		return fmt.Errorf("error al enviar notificación de inicio de recarga a %s: %w", telefono, err)
+	}
+	return nil
+}
+
 func (sm *StateMachine) AsignarStrike(ctx context.Context, telefono string) error {
 	cliente, err := sm.store.GetClientePorTelefono(ctx, telefono)
 	if err != nil {

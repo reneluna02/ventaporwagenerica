@@ -66,6 +66,7 @@ type Store interface {
 
 	// Métodos para Pedido
 	GetUltimoPedido(ctx context.Context, clienteID int) (*Pedido, error)
+	GetPedidosPorEstado(ctx context.Context, estado string) ([]*Pedido, error)
 	CrearPedido(ctx context.Context, pedido *Pedido) error
 	ActualizarPedido(ctx context.Context, pedido *Pedido) error
 
