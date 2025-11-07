@@ -43,7 +43,7 @@ func (s *SQLiteStore) Close() error {
 func (s *SQLiteStore) GetClientePorTelefono(ctx context.Context, telefono string) (*Cliente, error) {
 	query := `
 		SELECT id, numero_telefono, nombre, apellido_paterno, apellido_materno, 
-			   estado_conversacion, created_at, updated_at
+			   estado_conversacion, strikes, bloqueado, created_at, updated_at
 		FROM clientes 
 		WHERE numero_telefono = ?`
 
@@ -57,6 +57,8 @@ func (s *SQLiteStore) GetClientePorTelefono(ctx context.Context, telefono string
 		&cliente.ApellidoPaterno,
 		&cliente.ApellidoMaterno,
 		&cliente.EstadoConversacion,
+		&cliente.Strikes,
+		&cliente.Bloqueado,
 		&cliente.CreatedAt,
 		&cliente.UpdatedAt,
 	)
@@ -103,7 +105,8 @@ func (s *SQLiteStore) ActualizarCliente(ctx context.Context, cliente *Cliente) e
 	query := `
 		UPDATE clientes
 		SET nombre = ?, apellido_paterno = ?, apellido_materno = ?,
-			color_puerta = ?, color_fachada = ?, codigo_rojo = ?, estado_conversacion = ?, updated_at = CURRENT_TIMESTAMP
+			color_puerta = ?, color_fachada = ?, codigo_rojo = ?, estado_conversacion = ?,
+			strikes = ?, bloqueado = ?, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?`
 
 	result, err := s.db.ExecContext(ctx, query,
@@ -114,6 +117,8 @@ func (s *SQLiteStore) ActualizarCliente(ctx context.Context, cliente *Cliente) e
 		cliente.ColorFachada,
 		cliente.CodigoRojo,
 		cliente.EstadoConversacion,
+		cliente.Strikes,
+		cliente.Bloqueado,
 		cliente.ID,
 	)
 	if err != nil {

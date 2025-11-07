@@ -86,7 +86,7 @@ func NewStateMachine(s store.Store, sender WhatsAppSender) *StateMachine {
 func (sm *StateMachine) ProcessMessage(ctx context.Context, telefono, mensaje string) error {
 	// Verificar reporte de sello (interrumpe flujo normal)
 	if strings.Contains(strings.ToUpper(mensaje), "REPORTAR SELLO") {
-		return sm.handleReporteSello(ctx, telefono)
+		return sm.handleReporteSello(ctx, telefono, mensaje)
 	}
 
 	// Buscar o crear cliente
@@ -94,6 +94,13 @@ func (sm *StateMachine) ProcessMessage(ctx context.Context, telefono, mensaje st
 	if err != nil {
 		return fmt.Errorf("error buscando cliente: %w", err)
 	}
+
+	// Si el cliente existe, verificar si está bloqueado.
+	if cliente != nil && cliente.Bloqueado {
+		sm.sender.SendMessage(telefono, "Tu número ha sido bloqueado por incumplir nuestras políticas. No puedes realizar nuevos pedidos.")
+		return nil // Terminar la conversación.
+	}
+
 	if cliente == nil {
 		// Nuevo cliente: solicitar el nombre.
 		cliente = &store.Cliente{
@@ -184,7 +191,7 @@ func (sm *StateMachine) handleState(ctx context.Context, telefono, mensaje, esta
 		err = sm.handleColorPuerta(ctx, telefono, mensaje)
 	
 	case EstadoReportandoSello:
-		err = sm.handleReporteSello(ctx, telefono)
+		err = sm.handleReporteSello(ctx, telefono, mensaje)
 	
 	case EstadoEsperandoFotoSello:
 		err = sm.handleFotoSello(ctx, telefono, mensaje)
@@ -535,7 +542,22 @@ func (sm *StateMachine) handleCilindroCantidad(ctx context.Context, telefono, me
 
 	sm.session.PedidoEnCurso.CantidadCilindros = cantidad
 
-	// Siguiente paso: el pago.
+	// Si es recarga, iniciar el flujo de notificación de recolección.
+	if sm.session.PedidoEnCurso.TipoServicio == "cilindro_recarga" {
+		sm.sender.SendMessage(telefono, "Tu pedido de recarga ha sido confirmado. Un operador pasará a recoger tu cilindro.")
+
+		// Simulación: esperar un momento y enviar la confirmación de recolección.
+		go func() {
+			time.Sleep(10 * time.Second) // Simular tiempo de espera
+			sm.sender.SendMessage(telefono, "¡Tu cilindro ha sido recogido con éxito y está en camino a nuestra planta para ser recargado!")
+		}()
+
+		// Después de las notificaciones, el flujo podría continuar (ej. pago),
+		// pero por ahora volvemos al estado inicial.
+		return sm.actualizarEstado(ctx, telefono, EstadoInicial)
+	}
+
+	// Si es canje, continuar al flujo de pago directamente.
 	return sm.handlePago(ctx, telefono, "")
 }
 
@@ -552,13 +574,15 @@ func (sm *StateMachine) handleConfirmacionQR(ctx context.Context, telefono, mens
 }
 
 func (sm *StateMachine) handleFotoSello(ctx context.Context, telefono, mensaje string) error {
-	// TODO: Procesar foto cuando esté disponible
-	msg := "¡Gracias! Tu reporte ha sido actualizado con la foto.\n" +
-		"Un supervisor se comunicará contigo pronto para resolver el caso."
+	// En un caso real, aquí se procesaría el mensaje para extraer la imagen.
+	// Por ahora, simulamos la recepción y confirmamos al usuario.
+	msg := "Hemos recibido la imagen y la hemos añadido a tu reporte. Un supervisor se pondrá en contacto contigo a la brevedad."
 
 	if err := sm.sender.SendMessage(telefono, msg); err != nil {
 		return err
 	}
+
+	// El reporte ya fue creado, así que volvemos al estado inicial.
 	return sm.actualizarEstado(ctx, telefono, EstadoInicial)
 }
 
@@ -598,27 +622,51 @@ func (sm *StateMachine) handleConfirmacionEntrega(ctx context.Context, telefono,
 	}
 }
 
-func (sm *StateMachine) handleReporteSello(ctx context.Context, telefono string) error {
-	reporte := &store.ReporteSello{
-		ClienteID:    sm.session.ClienteActual.ID,
-		Estado:      "pendiente",
-		Descripcion: "Reporte de sello violado",
-		FechaReporte: time.Now(),
-	}
-	if err := sm.store.CrearReporteSello(ctx, reporte); err != nil {
-		return err
+func (sm *StateMachine) handleReporteSello(ctx context.Context, telefono, mensaje string) error {
+	// Este manejador tiene dos responsabilidades:
+	// 1. Crear el reporte inicial y hacer la pregunta sobre la foto.
+	// 2. Procesar la respuesta a esa pregunta (Sí/No).
+
+	// Si el estado actual NO es esperar la foto, significa que este es el
+	// primer llamado para reportar. Creamos el reporte y hacemos la pregunta.
+	if sm.session.ClienteActual.EstadoConversacion != EstadoEsperandoFotoSello {
+		reporte := &store.ReporteSello{
+			ClienteID:    sm.session.ClienteActual.ID,
+			Estado:       "pendiente",
+			Descripcion:  "Reporte de sello violado",
+			FechaReporte: time.Now(),
+		}
+		if err := sm.store.CrearReporteSello(ctx, reporte); err != nil {
+			return err
+		}
+
+		msg := "⚠️ *Reporte Recibido*\n\n" +
+			"Tu caso ha sido registrado con prioridad alta.\n" +
+			"Un supervisor se comunicará contigo en breve.\n\n" +
+			"¿Deseas enviar una foto del sello para adjuntar al reporte?\n" +
+			"1. Sí\n2. No"
+
+		if err := sm.sender.SendMessage(telefono, msg); err != nil {
+			return err
+		}
+		// Cambiamos el estado para que la siguiente respuesta se procese aquí.
+		return sm.actualizarEstado(ctx, telefono, EstadoEsperandoFotoSello)
 	}
 
-	msg := "⚠️ *Reporte Recibido*\n\n" +
-		"Tu caso ha sido registrado con prioridad alta.\n" +
-		"Un supervisor se comunicará contigo en breve.\n\n" +
-		"¿Deseas enviar una foto del sello?\n" +
-		"1. Sí\n2. No"
-
-	if err := sm.sender.SendMessage(telefono, msg); err != nil {
-		return err
+	// Si el estado YA es esperar la foto, procesamos la respuesta "1" o "2".
+	switch mensaje {
+	case "1":
+		sm.sender.SendMessage(telefono, "Por favor, envía la foto del sello.")
+		// Mantenemos el estado en EstadoEsperandoFotoSello, para que el siguiente
+		// mensaje (la foto) sea procesado por handleFotoSello.
+		return nil
+	case "2":
+		sm.sender.SendMessage(telefono, "Entendido. Tu reporte ha sido registrado sin foto.")
+		return sm.actualizarEstado(ctx, telefono, EstadoInicial)
+	default:
+		sm.sender.SendMessage(telefono, "Opción no válida. Por favor, responde 1 para Sí o 2 para No.")
+		return nil
 	}
-	return sm.actualizarEstado(ctx, telefono, EstadoEsperandoFotoSello)
 }
 
 func (sm *StateMachine) actualizarEstado(ctx context.Context, telefono, nuevoEstado string) error {
@@ -747,4 +795,49 @@ func (sm *StateMachine) handleColorPuerta(ctx context.Context, telefono, mensaje
 
 	sm.sender.SendMessage(telefono, "¡Perfecto! Hemos añadido los colores a tu dirección.")
 	return sm.handleConfirmacionFinal(ctx, telefono)
+}
+
+// AsignarStrike aplica un strike a un cliente y le notifica.
+// Si el cliente alcanza los 3 strikes, es bloqueado.
+func (sm *StateMachine) AsignarStrike(ctx context.Context, telefono string) error {
+	cliente, err := sm.store.GetClientePorTelefono(ctx, telefono)
+	if err != nil {
+		return fmt.Errorf("no se pudo encontrar al cliente %s para asignarle un strike: %w", telefono, err)
+	}
+	if cliente == nil {
+		return fmt.Errorf("intento de asignar strike a un cliente no existente: %s", telefono)
+	}
+
+	// Incrementar strike
+	cliente.Strikes++
+
+	// Si llega a 3 strikes, bloquearlo.
+	if cliente.Strikes >= 3 {
+		cliente.Bloqueado = true
+		msg := fmt.Sprintf(
+			"Has acumulado %d strikes por no atender a nuestro repartidor. Tu número ha sido bloqueado y ya no podrás realizar pedidos por este medio.",
+			cliente.Strikes,
+		)
+		if err := sm.sender.SendMessage(telefono, msg); err != nil {
+			// Loggear el error, pero continuar para guardar el estado de bloqueo.
+			fmt.Printf("Error al enviar mensaje de bloqueo a %s: %v\n", telefono, err)
+		}
+	} else {
+		// Notificar del strike y reagendamiento.
+		msg := fmt.Sprintf(
+			"Hola %s. No pudimos completar tu entrega porque no se atendió a nuestro repartidor en el tiempo límite de 10 minutos. Se te ha asignado un strike (%d de 3).\n\nTu pedido ha sido reagendado para mañana. Acumular 3 strikes resultará en el bloqueo de tu número.",
+			cliente.Nombre,
+			cliente.Strikes,
+		)
+		if err := sm.sender.SendMessage(telefono, msg); err != nil {
+			fmt.Printf("Error al enviar mensaje de strike a %s: %v\n", telefono, err)
+		}
+	}
+
+	// Guardar los cambios en la base de datos.
+	if err := sm.store.ActualizarCliente(ctx, cliente); err != nil {
+		return fmt.Errorf("error al actualizar al cliente %s con el nuevo strike: %w", telefono, err)
+	}
+
+	return nil
 }

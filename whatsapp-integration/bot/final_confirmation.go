@@ -15,6 +15,7 @@ func (sm *StateMachine) handleConfirmacionFinal(ctx context.Context, telefono st
 			"  - *Total a Pagar:* $%.2f\n"+
 			"  - *Método de Pago:* %s\n"+
 			"  - *Dirección de Entrega:* %s\n\n"+
+			"*Importante:* Nuestro repartidor solo podrá esperar un máximo de 10 minutos en tu domicilio.\n\n"+
 			"¿Confirmas tu pedido?\n1. Sí, confirmar\n2. No, cancelar",
 		pedido.TipoServicio,
 		pedido.CantidadLitros,

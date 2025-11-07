@@ -17,6 +17,8 @@ type Cliente struct {
 	ColorPuerta        string
 	ColorFachada       string
 	CodigoRojo         bool
+	Strikes            int
+	Bloqueado          bool
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
 }

@@ -17,6 +17,8 @@ const (
 		color_puerta TEXT,
 		color_fachada TEXT,
 		codigo_rojo BOOLEAN DEFAULT FALSE,
+		strikes INTEGER DEFAULT 0,
+		bloqueado BOOLEAN DEFAULT FALSE,
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 	);`
