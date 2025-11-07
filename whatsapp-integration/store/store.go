@@ -17,6 +17,9 @@ type Cliente struct {
 	ColorPuerta        string
 	ColorFachada       string
 	CodigoRojo         bool
+	Strikes            int
+	Bloqueado          bool
+	Categoria          string
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
 }
@@ -26,6 +29,7 @@ type Pedido struct {
 	ID                int
 	ClienteID         int
 	TipoServicio      string // "estacionario" o "cilindro"
+	HorarioPreferido  string // "Mañana", "Tarde"
 	CantidadLitros    float64
 	CantidadDinero    float64
 	PrecioUnitario    float64
@@ -62,6 +66,8 @@ type Store interface {
 
 	// Métodos para Pedido
 	GetUltimoPedido(ctx context.Context, clienteID int) (*Pedido, error)
+	GetUltimoPedidoActivo(ctx context.Context, clienteID int) (*Pedido, error)
+	GetPedidosPorEstado(ctx context.Context, estado string) ([]*Pedido, error)
 	CrearPedido(ctx context.Context, pedido *Pedido) error
 	ActualizarPedido(ctx context.Context, pedido *Pedido) error
 
@@ -91,6 +97,8 @@ func NewStore(cfg Config) (Store, error) {
 		return NewMySQLStore(cfg)
 	case "sqlite3":
 		return NewSQLiteStore(cfg)
+	case "sqlserver":
+		return NewSQLServerStore(cfg)
 	default:
 		return nil, fmt.Errorf("driver no soportado: %s", cfg.Driver)
 	}

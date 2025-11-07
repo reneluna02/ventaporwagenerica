@@ -43,7 +43,7 @@ func (s *SQLiteStore) Close() error {
 func (s *SQLiteStore) GetClientePorTelefono(ctx context.Context, telefono string) (*Cliente, error) {
 	query := `
 		SELECT id, numero_telefono, nombre, apellido_paterno, apellido_materno, 
-			   estado_conversacion, created_at, updated_at
+			   estado_conversacion, strikes, bloqueado, categoria, created_at, updated_at
 		FROM clientes 
 		WHERE numero_telefono = ?`
 
@@ -57,6 +57,9 @@ func (s *SQLiteStore) GetClientePorTelefono(ctx context.Context, telefono string
 		&cliente.ApellidoPaterno,
 		&cliente.ApellidoMaterno,
 		&cliente.EstadoConversacion,
+		&cliente.Strikes,
+		&cliente.Bloqueado,
+		&cliente.Categoria,
 		&cliente.CreatedAt,
 		&cliente.UpdatedAt,
 	)
@@ -103,7 +106,8 @@ func (s *SQLiteStore) ActualizarCliente(ctx context.Context, cliente *Cliente) e
 	query := `
 		UPDATE clientes
 		SET nombre = ?, apellido_paterno = ?, apellido_materno = ?,
-			color_puerta = ?, color_fachada = ?, codigo_rojo = ?, estado_conversacion = ?, updated_at = CURRENT_TIMESTAMP
+			color_puerta = ?, color_fachada = ?, codigo_rojo = ?, estado_conversacion = ?,
+			strikes = ?, bloqueado = ?, categoria = ?, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?`
 
 	result, err := s.db.ExecContext(ctx, query,
@@ -114,6 +118,9 @@ func (s *SQLiteStore) ActualizarCliente(ctx context.Context, cliente *Cliente) e
 		cliente.ColorFachada,
 		cliente.CodigoRojo,
 		cliente.EstadoConversacion,
+		cliente.Strikes,
+		cliente.Bloqueado,
+		cliente.Categoria,
 		cliente.ID,
 	)
 	if err != nil {
@@ -154,7 +161,7 @@ func (s *SQLiteStore) ActualizarEstadoCliente(ctx context.Context, telefono, est
 func (s *SQLiteStore) GetUltimoPedido(ctx context.Context, clienteID int) (*Pedido, error) {
 	query := `
 		SELECT id, cliente_id, tipo_servicio, cantidad_litros, cantidad_dinero,
-			   metodo_pago, direccion, color_fachada, estado, created_at, updated_at
+			   metodo_pago, direccion, color_fachada, estado, horario_preferido, created_at, updated_at
 		FROM pedidos 
 		WHERE cliente_id = ?
 		ORDER BY created_at DESC
@@ -173,6 +180,7 @@ func (s *SQLiteStore) GetUltimoPedido(ctx context.Context, clienteID int) (*Pedi
 		&pedido.Direccion,
 		&pedido.ColorFachada,
 		&pedido.Estado,
+		&pedido.HorarioPreferido,
 		&pedido.CreatedAt,
 		&pedido.UpdatedAt,
 	)
@@ -189,8 +197,8 @@ func (s *SQLiteStore) CrearPedido(ctx context.Context, pedido *Pedido) error {
 	query := `
 		INSERT INTO pedidos (
 			cliente_id, tipo_servicio, cantidad_litros, cantidad_dinero,
-			metodo_pago, direccion, color_fachada, estado
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+			metodo_pago, direccion, color_fachada, estado, horario_preferido
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	result, err := s.db.ExecContext(ctx, query,
 		pedido.ClienteID,
@@ -201,6 +209,7 @@ func (s *SQLiteStore) CrearPedido(ctx context.Context, pedido *Pedido) error {
 		pedido.Direccion,
 		pedido.ColorFachada,
 		pedido.Estado,
+		pedido.HorarioPreferido,
 	)
 	if err != nil {
 		return fmt.Errorf("error insertando pedido: %w", err)
@@ -212,6 +221,80 @@ func (s *SQLiteStore) CrearPedido(ctx context.Context, pedido *Pedido) error {
 	}
 	pedido.ID = int(id)
 	return nil
+}
+
+func (s *SQLiteStore) GetUltimoPedidoActivo(ctx context.Context, clienteID int) (*Pedido, error) {
+	query := `
+		SELECT id, cliente_id, tipo_servicio, cantidad_litros, cantidad_dinero,
+			   metodo_pago, direccion, color_fachada, estado, horario_preferido, created_at, updated_at
+		FROM pedidos
+		WHERE cliente_id = ? AND estado NOT IN ('entregado', 'cancelado')
+		ORDER BY created_at DESC
+		LIMIT 1`
+
+	row := s.db.QueryRowContext(ctx, query, clienteID)
+
+	pedido := &Pedido{}
+	err := row.Scan(
+		&pedido.ID,
+		&pedido.ClienteID,
+		&pedido.TipoServicio,
+		&pedido.CantidadLitros,
+		&pedido.CantidadDinero,
+		&pedido.MetodoPago,
+		&pedido.Direccion,
+		&pedido.ColorFachada,
+		&pedido.Estado,
+		&pedido.HorarioPreferido,
+		&pedido.CreatedAt,
+		&pedido.UpdatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("error escaneando pedido activo: %w", err)
+	}
+	return pedido, nil
+}
+
+func (s *SQLiteStore) GetPedidosPorEstado(ctx context.Context, estado string) ([]*Pedido, error) {
+	query := `
+		SELECT id, cliente_id, tipo_servicio, cantidad_litros, cantidad_dinero,
+			   metodo_pago, direccion, color_fachada, estado, horario_preferido, created_at, updated_at
+		FROM pedidos
+		WHERE estado = ?`
+
+	rows, err := s.db.QueryContext(ctx, query, estado)
+	if err != nil {
+		return nil, fmt.Errorf("error consultando pedidos por estado: %w", err)
+	}
+	defer rows.Close()
+
+	var pedidos []*Pedido
+	for rows.Next() {
+		pedido := &Pedido{}
+		err := rows.Scan(
+			&pedido.ID,
+			&pedido.ClienteID,
+			&pedido.TipoServicio,
+			&pedido.CantidadLitros,
+			&pedido.CantidadDinero,
+			&pedido.MetodoPago,
+			&pedido.Direccion,
+			&pedido.ColorFachada,
+			&pedido.Estado,
+			&pedido.HorarioPreferido,
+			&pedido.CreatedAt,
+			&pedido.UpdatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("error escaneando pedido: %w", err)
+		}
+		pedidos = append(pedidos, pedido)
+	}
+
+	return pedidos, nil
 }
 
 func (s *SQLiteStore) ActualizarPedido(ctx context.Context, pedido *Pedido) error {
