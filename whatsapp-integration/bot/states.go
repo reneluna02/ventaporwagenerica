@@ -583,11 +583,19 @@ func (sm *StateMachine) handleConfirmacionQR(ctx context.Context, telefono, mens
 func (sm *StateMachine) handleFotoSello(ctx context.Context, telefono, mensaje string) error {
 	// En un caso real, aquí se procesaría el mensaje para extraer la imagen.
 	// Por ahora, simulamos la recepción y confirmamos al usuario.
-	msg := "Hemos recibido la imagen y la hemos añadido a tu reporte. Un supervisor se pondrá en contacto contigo a la brevedad."
+	confirmacion := "Hemos recibido la imagen y la hemos añadido a tu reporte. Un supervisor se pondrá en contacto contigo a la brevedad."
+	if err := sm.sender.SendMessage(telefono, confirmacion); err != nil {
+		fmt.Printf("Error al enviar confirmación de foto de sello: %v\n", err)
+	}
 
-	if err := sm.sender.SendMessage(telefono, msg); err != nil {
+	// Enviar la instrucción sobre el no pago.
+	instruccion := "Recuerda que al no aceptar el pedido por un sello violado, *no debes realizar el pago*. Por favor, muestra este mensaje a nuestro repartidor como confirmación."
+	if err := sm.sender.SendMessage(telefono, instruccion); err != nil {
 		return err
 	}
+
+	// Simular la alerta interna para el repartidor.
+	sm.NotificarAlertaARepartidor(ctx, telefono)
 
 	// El reporte ya fue creado, así que volvemos al estado inicial.
 	return sm.actualizarEstado(ctx, telefono, EstadoInicial)
@@ -669,6 +677,16 @@ func (sm *StateMachine) handleReporteSello(ctx context.Context, telefono, mensaj
 		return nil
 	case "2":
 		sm.sender.SendMessage(telefono, "Entendido. Tu reporte ha sido registrado sin foto.")
+
+		// Enviar la instrucción sobre el no pago.
+		instruccion := "Recuerda que al no aceptar el pedido por un sello violado, *no debes realizar el pago*. Por favor, muestra este mensaje a nuestro repartidor como confirmación."
+		if err := sm.sender.SendMessage(telefono, instruccion); err != nil {
+			return err
+		}
+
+		// Simular la alerta interna para el repartidor.
+		sm.NotificarAlertaARepartidor(ctx, telefono)
+
 		return sm.actualizarEstado(ctx, telefono, EstadoInicial)
 	default:
 		sm.sender.SendMessage(telefono, "Opción no válida. Por favor, responde 1 para Sí o 2 para No.")
@@ -913,6 +931,40 @@ func (sm *StateMachine) handleEstadoPedido(ctx context.Context, telefono string)
 	}
 
 	return nil
+}
+
+// NotificarPedidoEnRuta envía un mensaje al cliente informando que su pedido está en camino.
+func (sm *StateMachine) NotificarPedidoEnRuta(ctx context.Context, telefono string) error {
+	msg := "¡Tu pedido va en camino! Nuestro repartidor llegará a tu domicilio en el transcurso del día."
+	if err := sm.sender.SendMessage(telefono, msg); err != nil {
+		return fmt.Errorf("error al enviar notificación de pedido en ruta a %s: %w", telefono, err)
+	}
+	return nil
+}
+
+// NotificarAlertaARepartidor simula el envío de una alerta al punto de venta o al repartidor.
+func (sm *StateMachine) NotificarAlertaARepartidor(ctx context.Context, telefono string) {
+	cliente, err := sm.store.GetClientePorTelefono(ctx, telefono)
+	if err != nil || cliente == nil {
+		fmt.Printf("Error crítico: no se pudo encontrar al cliente %s para notificar alerta a repartidor.\n", telefono)
+		return
+	}
+
+	pedido, err := sm.store.GetUltimoPedidoActivo(ctx, cliente.ID)
+	if err != nil || pedido == nil {
+		fmt.Printf("Error crítico: no se pudo encontrar el pedido activo para el cliente %s.\n", telefono)
+		return
+	}
+
+	logMsg := fmt.Sprintf(
+		"[ALERTA OPERADOR] Cliente %s (Tel: %s) ha reportado un SELLO VIOLADO para el Pedido #%d. Instrucción: NO REALIZAR EL COBRO.",
+		cliente.Nombre,
+		telefono,
+		pedido.ID,
+	)
+	// En un sistema real, esto se enviaría a una API del punto de venta.
+	// Por ahora, lo imprimimos en el log del sistema.
+	fmt.Println(logMsg)
 }
 
 func (sm *StateMachine) AsignarStrike(ctx context.Context, telefono string) error {
