@@ -23,10 +23,20 @@ type WebhookPayload struct {
 }
 
 func main() {
+	// Abrir o crear el archivo de log
+	logFile, err := os.OpenFile("whatsapp-integration.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
+	if err != nil {
+		log.Fatalf("Error al abrir el archivo de log: %v", err)
+	}
+	defer logFile.Close()
+
+	// Redirigir la salida del log al archivo
+	log.SetOutput(logFile)
+
 	// Cargar configuración desde env
-	provider := os.Getenv("WHATSAPP_PROVIDER") // "meta" o "twilio"
+	provider := os.Getenv("WHATSAPP_PROVIDER") // "nodescript"
 	if provider == "" {
-		provider = "meta" // predeterminado
+		provider = "nodescript" // predeterminado
 	}
 
 	client, err := adapter.NewClientFromEnv(provider)
@@ -62,12 +72,6 @@ func main() {
 		if r.Method == http.MethodPost {
 			// Limitar tamaño del body para seguridad
 			r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MiB
-			// Verificar firma (Meta) si está configurada
-			if err := verifyMetaSignature(r); err != nil {
-				log.Println("Firma del webhook inválida:", err)
-				w.WriteHeader(http.StatusForbidden)
-				return
-			}
 
 			var payload WebhookPayload
 			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
