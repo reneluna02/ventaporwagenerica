@@ -45,6 +45,7 @@ const (
 	EstadoConfirmandoDireccion  = "CONFIRMANDO_DIRECCION"          // Con Maps/Street View
 	EstadoConfirmandoPedidoFinal = "CONFIRMANDO_PEDIDO_FINAL"
 	EstadoEsperandoColorFachada = "ESPERANDO_COLOR_FACHADA"
+	EstadoEsperandoColorPuerta = "ESPERANDO_COLOR_PUERTA"
 
 	// Estados especiales
 	EstadoReportandoSello      = "REPORTANDO_SELLO"               // Cliente reporta sello violado
@@ -178,6 +179,9 @@ func (sm *StateMachine) handleState(ctx context.Context, telefono, mensaje, esta
 	
 	case EstadoEsperandoColorFachada:
 		err = sm.handleColorFachada(ctx, telefono, mensaje)
+
+	case EstadoEsperandoColorPuerta:
+		err = sm.handleColorPuerta(ctx, telefono, mensaje)
 	
 	case EstadoReportandoSello:
 		err = sm.handleReporteSello(ctx, telefono)
@@ -472,6 +476,7 @@ func (sm *StateMachine) handleTabuladorPorcentaje(ctx context.Context, telefono,
 		TipoServicio:   "estacionario",
 		CantidadLitros: litrosDeseados,
 		PrecioUnitario: precioLitro,
+		CantidadDinero: total,
 	}
 
 	if err := sm.sender.SendMessage(telefono, msg); err != nil {
@@ -694,8 +699,8 @@ func (sm *StateMachine) handleConfirmacionDireccion(ctx context.Context, telefon
 		// La dirección es correcta, procedemos a la confirmación final del pedido.
 		return sm.handleConfirmacionFinal(ctx, telefono)
 	case "2":
-		// El usuario quiere cambiar la dirección, volvemos a preguntar.
-		return sm.handleDireccion(ctx, telefono, "")
+		// El usuario quiere cambiar la dirección, pedimos más detalles.
+		return sm.handleColorFachada(ctx, telefono, "")
 	default:
 		sm.sender.SendMessage(telefono, "Opción no válida. Por favor, responde 1 para Sí o 2 para No.")
 		return nil
@@ -703,6 +708,43 @@ func (sm *StateMachine) handleConfirmacionDireccion(ctx context.Context, telefon
 }
 
 func (sm *StateMachine) handleColorFachada(ctx context.Context, telefono, mensaje string) error {
-	sm.sender.SendMessage(telefono, "Función de color de fachada pendiente.")
-	return sm.actualizarEstado(ctx, telefono, EstadoInicial)
+	// Si el estado no es el de esperar color, hacemos la pregunta.
+	if sm.session.ClienteActual.EstadoConversacion != EstadoEsperandoColorFachada {
+		msg := "Entendido. Para ayudar al repartidor, por favor dime el color de la fachada de tu casa."
+		if err := sm.sender.SendMessage(telefono, msg); err != nil {
+			return err
+		}
+		return sm.actualizarEstado(ctx, telefono, EstadoEsperandoColorFachada)
+	}
+
+	// Si ya estamos en el estado, guardamos el color y pedimos el siguiente.
+	if strings.TrimSpace(mensaje) == "" {
+		sm.sender.SendMessage(telefono, "El color no puede estar vacío. Por favor, inténtalo de nuevo.")
+		return nil
+	}
+	sm.session.PedidoEnCurso.ColorFachada = mensaje
+
+	// Siguiente paso: pedir el color de la puerta.
+	return sm.handleColorPuerta(ctx, telefono, "")
+}
+
+func (sm *StateMachine) handleColorPuerta(ctx context.Context, telefono, mensaje string) error {
+	// Si el estado no es el de esperar color, hacemos la pregunta.
+	if sm.session.ClienteActual.EstadoConversacion != "ESPERANDO_COLOR_PUERTA" {
+		msg := "¡Gracias! Ahora, por favor dime el color de la puerta."
+		if err := sm.sender.SendMessage(telefono, msg); err != nil {
+			return err
+		}
+		return sm.actualizarEstado(ctx, telefono, "ESPERANDO_COLOR_PUERTA")
+	}
+
+	// Si ya estamos en el estado, guardamos el color y confirmamos.
+	if strings.TrimSpace(mensaje) == "" {
+		sm.sender.SendMessage(telefono, "El color no puede estar vacío. Por favor, inténtalo de nuevo.")
+		return nil
+	}
+	sm.session.PedidoEnCurso.ColorPuerta = mensaje
+
+	sm.sender.SendMessage(telefono, "¡Perfecto! Hemos añadido los colores a tu dirección.")
+	return sm.handleConfirmacionFinal(ctx, telefono)
 }
