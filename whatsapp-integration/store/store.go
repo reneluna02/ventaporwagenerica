@@ -66,6 +66,7 @@ type Store interface {
 
 	// Métodos para Pedido
 	GetUltimoPedido(ctx context.Context, clienteID int) (*Pedido, error)
+	GetUltimoPedidoActivo(ctx context.Context, clienteID int) (*Pedido, error)
 	GetPedidosPorEstado(ctx context.Context, estado string) ([]*Pedido, error)
 	CrearPedido(ctx context.Context, pedido *Pedido) error
 	ActualizarPedido(ctx context.Context, pedido *Pedido) error
@@ -96,6 +97,8 @@ func NewStore(cfg Config) (Store, error) {
 		return NewMySQLStore(cfg)
 	case "sqlite3":
 		return NewSQLiteStore(cfg)
+	case "sqlserver":
+		return NewSQLServerStore(cfg)
 	default:
 		return nil, fmt.Errorf("driver no soportado: %s", cfg.Driver)
 	}

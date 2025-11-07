@@ -85,7 +85,10 @@ func NewStateMachine(s store.Store, sender WhatsAppSender) *StateMachine {
 
 // ProcessMessage procesa un mensaje entrante según el estado actual
 func (sm *StateMachine) ProcessMessage(ctx context.Context, telefono, mensaje string) error {
-	// Verificar reporte de sello (interrumpe flujo normal)
+	// Comandos globales que interrumpen el flujo normal
+	if strings.ToLower(mensaje) == "estado" {
+		return sm.handleEstadoPedido(ctx, telefono)
+	}
 	if strings.Contains(strings.ToUpper(mensaje), "REPORTAR SELLO") {
 		return sm.handleReporteSello(ctx, telefono, mensaje)
 	}
@@ -690,24 +693,11 @@ func (sm *StateMachine) handleConfirmacionFotoCasa(ctx context.Context, telefono
 }
 
 func (sm *StateMachine) handlePago(ctx context.Context, telefono, mensaje string) error {
-	// Si el estado no es el de esperar pago, hacemos la pregunta.
-	if sm.session.ClienteActual.EstadoConversacion != EstadoEsperandoPago {
-		msg := "¿Cuál será tu método de pago?\n\n1. Tarjeta\n2. Efectivo"
-		if err := sm.sender.SendMessage(telefono, msg); err != nil {
-			return err
-		}
-		return sm.actualizarEstado(ctx, telefono, EstadoEsperandoPago)
-	}
-
-	// Si ya estamos en el estado, procesamos la respuesta.
-	switch mensaje {
-	case "1":
-		sm.session.PedidoEnCurso.MetodoPago = "tarjeta"
-	case "2":
-		sm.session.PedidoEnCurso.MetodoPago = "efectivo"
-	default:
-		sm.sender.SendMessage(telefono, "Opción no válida. Por favor, elige 1 para Tarjeta o 2 para Efectivo.")
-		return nil
+	// Asignar "Efectivo" automáticamente e informar al cliente.
+	sm.session.PedidoEnCurso.MetodoPago = "efectivo"
+	msg := "El pago se realizará en efectivo al momento de la entrega."
+	if err := sm.sender.SendMessage(telefono, msg); err != nil {
+		return err
 	}
 
 	// Siguiente paso: pedir la dirección.
@@ -896,6 +886,32 @@ func (sm *StateMachine) NotificarInicioDeRecarga(ctx context.Context, telefono s
 	if err := sm.sender.SendMessage(telefono, msg); err != nil {
 		return fmt.Errorf("error al enviar notificación de inicio de recarga a %s: %w", telefono, err)
 	}
+	return nil
+}
+
+func (sm *StateMachine) handleEstadoPedido(ctx context.Context, telefono string) error {
+	cliente, err := sm.store.GetClientePorTelefono(ctx, telefono)
+	if err != nil {
+		return fmt.Errorf("error buscando cliente para consultar estado: %w", err)
+	}
+	if cliente == nil {
+		// Esto no debería ocurrir si el cliente ya está interactuando, pero es una buena validación.
+		sm.sender.SendMessage(telefono, "No pudimos encontrar tus datos. Por favor, inicia la conversación para registrarte.")
+		return nil
+	}
+
+	pedido, err := sm.store.GetUltimoPedidoActivo(ctx, cliente.ID)
+	if err != nil {
+		return fmt.Errorf("error buscando pedido activo: %w", err)
+	}
+
+	if pedido == nil {
+		sm.sender.SendMessage(telefono, "No tienes ningún pedido activo en este momento.")
+	} else {
+		msg := fmt.Sprintf("El estado de tu último pedido es: *%s*", pedido.Estado)
+		sm.sender.SendMessage(telefono, msg)
+	}
+
 	return nil
 }
 

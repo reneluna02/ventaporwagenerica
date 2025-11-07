@@ -223,6 +223,41 @@ func (s *SQLiteStore) CrearPedido(ctx context.Context, pedido *Pedido) error {
 	return nil
 }
 
+func (s *SQLiteStore) GetUltimoPedidoActivo(ctx context.Context, clienteID int) (*Pedido, error) {
+	query := `
+		SELECT id, cliente_id, tipo_servicio, cantidad_litros, cantidad_dinero,
+			   metodo_pago, direccion, color_fachada, estado, horario_preferido, created_at, updated_at
+		FROM pedidos
+		WHERE cliente_id = ? AND estado NOT IN ('entregado', 'cancelado')
+		ORDER BY created_at DESC
+		LIMIT 1`
+
+	row := s.db.QueryRowContext(ctx, query, clienteID)
+
+	pedido := &Pedido{}
+	err := row.Scan(
+		&pedido.ID,
+		&pedido.ClienteID,
+		&pedido.TipoServicio,
+		&pedido.CantidadLitros,
+		&pedido.CantidadDinero,
+		&pedido.MetodoPago,
+		&pedido.Direccion,
+		&pedido.ColorFachada,
+		&pedido.Estado,
+		&pedido.HorarioPreferido,
+		&pedido.CreatedAt,
+		&pedido.UpdatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("error escaneando pedido activo: %w", err)
+	}
+	return pedido, nil
+}
+
 func (s *SQLiteStore) GetPedidosPorEstado(ctx context.Context, estado string) ([]*Pedido, error) {
 	query := `
 		SELECT id, cliente_id, tipo_servicio, cantidad_litros, cantidad_dinero,
