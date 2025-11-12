@@ -2,6 +2,7 @@ package bot
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strconv"
@@ -767,18 +768,23 @@ func (sm *StateMachine) handleDireccion(ctx context.Context, telefono, mensaje s
 	// Siguiente paso: geocodificar y confirmar visualmente.
 	lat, lng, err := sm.mapsClient.Geocode(mensaje)
 	if err != nil {
-		// Si falla la geocodificación, recurrir a la confirmación de texto.
+		// Si falla la geocodificación, marcar para revisión manual y notificar.
 		fmt.Printf("Error de geocodificación: %v\n", err)
+		sm.session.PedidoEnCurso.RequiereRevisionManual = true
+		sm.sender.SendMessage(telefono, "No pudimos verificar tu dirección automáticamente. Un operador la revisará manualmente. Por favor, confirma que la has escrito correctamente.")
 		return sm.handleConfirmacionDireccion(ctx, telefono, "")
 	}
 
 	sm.session.PedidoEnCurso.Latitud = lat
 	sm.session.PedidoEnCurso.Longitud = lng
 
-	// Enviar mapa estático y Street View.
+	// Generar y guardar las URLs de los mapas.
 	mapURL := sm.mapsClient.GenerateStaticMapURL(lat, lng)
 	streetViewURL := sm.mapsClient.GenerateStreetViewURL(lat, lng)
+	sm.session.PedidoEnCurso.MapaURL = mapURL
+	sm.session.PedidoEnCurso.StreetViewURL = streetViewURL
 
+	// Enviar mapa estático y Street View.
 	sm.sender.SendImage(telefono, mapURL, "Ubicación en el mapa.")
 	sm.sender.SendImage(telefono, streetViewURL, "Vista de la calle.")
 
@@ -928,11 +934,35 @@ func (sm *StateMachine) GenerarRutaDiaria(ctx context.Context) {
 		return
 	}
 
-	fmt.Printf("--- CORTE 5:00 AM - RUTA DEL DÍA ---\n")
-	for _, p := range pedidos {
-		fmt.Printf("  - Pedido #%d | Cliente ID: %d | Tipo: %s | Dirección: %s | Coords: (%f, %f)\n", p.ID, p.ClienteID, p.TipoServicio, p.Direccion, p.Latitud, p.Longitud)
+	// Estructura para la salida JSON.
+	type PuntoDeEntrega struct {
+		PedidoID  int     `json:"pedido_id"`
+		Direccion string  `json:"direccion"`
+		Latitud   float64 `json:"latitud"`
+		Longitud  float64 `json:"longitud"`
 	}
-	fmt.Printf("-------------------------------------\n")
+
+	puntos := make([]PuntoDeEntrega, 0, len(pedidos))
+	for _, p := range pedidos {
+		puntos = append(puntos, PuntoDeEntrega{
+			PedidoID:  p.ID,
+			Direccion: p.Direccion,
+			Latitud:   p.Latitud,
+			Longitud:  p.Longitud,
+		})
+	}
+
+	// Convertir a JSON.
+	jsonData, err := json.MarshalIndent(puntos, "", "  ")
+	if err != nil {
+		fmt.Printf("Error al generar JSON para la ruta: %v\n", err)
+		return
+	}
+
+	// Imprimir el JSON en el log.
+	fmt.Println("--- CORTE 5:00 AM - RUTA DEL DÍA (JSON) ---")
+	fmt.Println(string(jsonData))
+	fmt.Println("-----------------------------------------")
 }
 
 // NotificarLlegadaAPlanta envía un mensaje al cliente informando que su cilindro llegó a la planta.

@@ -32,6 +32,9 @@ type Pedido struct {
 	HorarioPreferido  string // "Mañana", "Tarde"
 	Latitud           float64
 	Longitud          float64
+	MapaURL           string
+	StreetViewURL     string
+	RequiereRevisionManual bool
 	CantidadLitros    float64
 	CantidadDinero    float64
 	PrecioUnitario    float64
