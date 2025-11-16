@@ -2,11 +2,15 @@ package bot
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
+	"example.com/whatsapp-integration/maps"
 	"example.com/whatsapp-integration/store"
 )
 
@@ -54,29 +58,46 @@ const (
 	EstadoConfirmandoEntrega   = "CONFIRMANDO_ENTREGA"           // Cliente confirma recepción
 )
 
+// Estados de Pedido
+const (
+	EstadoPedidoPendiente        = "pendiente"
+	EstadoPedidoPendienteRecoleccion = "pendiente_recoleccion"
+	EstadoPedidoEnPlanta         = "en_planta"
+	EstadoPedidoEnRecarga        = "en_recarga"
+	EstadoPedidoEnRuta           = "en_ruta"
+	EstadoPedidoEntregado        = "entregado"
+	EstadoPedidoCancelado        = "cancelado"
+)
+
 // WhatsAppSender es una interfaz para enviar mensajes
 type WhatsAppSender interface {
 	SendMessage(to string, text string) error
+	SendImage(to string, imageURL string, caption string) error
 }
 
 // StateMachine maneja la lógica de estados del bot
 type StateMachine struct {
-	store   store.Store
-	sender  WhatsAppSender
-	session *Session // mantiene datos temporales entre estados
+	store        store.Store
+	sender       WhatsAppSender
+	mapsClient   *maps.Client
+	session      *Session // mantiene datos temporales entre estados
+	userMutexes  map[string]*sync.Mutex
+	mapMutex     sync.Mutex
 }
 
 // Session mantiene datos temporales entre estados
 type Session struct {
-	ClienteActual  *store.Cliente
-	PedidoEnCurso  *store.Pedido
-	DatosTemp      map[string]interface{}
+	ClienteActual *store.Cliente
+	PedidoEnCurso *store.Pedido
+	DatosTemp     map[string]interface{}
 }
 
-func NewStateMachine(s store.Store, sender WhatsAppSender) *StateMachine {
+func NewStateMachine(s store.Store, sender WhatsAppSender, mapsClient *maps.Client) *StateMachine {
 	return &StateMachine{
-		store:  s,
-		sender: sender,
+		store:       s,
+		sender:      sender,
+		mapsClient:  mapsClient,
+		userMutexes: make(map[string]*sync.Mutex),
 		session: &Session{
 			DatosTemp: make(map[string]interface{}),
 		},
@@ -85,6 +106,11 @@ func NewStateMachine(s store.Store, sender WhatsAppSender) *StateMachine {
 
 // ProcessMessage procesa un mensaje entrante según el estado actual
 func (sm *StateMachine) ProcessMessage(ctx context.Context, telefono, mensaje string) error {
+	// Adquirir el mutex para este usuario para procesar sus mensajes en orden.
+	mu := sm.getUserMutex(telefono)
+	mu.Lock()
+	defer mu.Unlock()
+
 	// Comandos globales que interrumpen el flujo normal
 	if strings.ToLower(mensaje) == "estado" {
 		return sm.handleEstadoPedido(ctx, telefono)
@@ -266,7 +292,7 @@ func (sm *StateMachine) handleOpcionInicial(ctx context.Context, telefono, mensa
 	// Flujo para clientes CON pedidos previos
 	switch mensaje {
 	case "1": // Repetir pedido
-		precioActualLitro := 12.50 // Simulación de precio actual.
+		precioActualLitro := getPrecioGasLitro()
 		nuevoPedido := *pedido
 		nuevoPedido.ID = 0 // Es un nuevo registro en la BD.
 		nuevoPedido.Estado = "pendiente"
@@ -396,7 +422,7 @@ func (sm *StateMachine) handleEstacionarioLitros(ctx context.Context, telefono, 
 		return nil
 	}
 
-	precioActualLitro := 12.50 // Simulación
+	precioActualLitro := getPrecioGasLitro()
 	total := litros * precioActualLitro
 	sm.session.PedidoEnCurso.CantidadLitros = litros
 	sm.session.PedidoEnCurso.PrecioUnitario = precioActualLitro
@@ -414,7 +440,7 @@ func (sm *StateMachine) handleEstacionarioDinero(ctx context.Context, telefono, 
 		return nil
 	}
 
-	precioActualLitro := 12.50 // Simulación
+	precioActualLitro := getPrecioGasLitro()
 	litros := dinero / precioActualLitro
 	sm.session.PedidoEnCurso.CantidadDinero = dinero
 	sm.session.PedidoEnCurso.PrecioUnitario = precioActualLitro
@@ -470,7 +496,7 @@ func (sm *StateMachine) handleTabuladorPorcentaje(ctx context.Context, telefono,
 
 	capacidadTotal := sm.session.DatosTemp["capacidad_total"].(float64)
 	litrosDeseados := capacidadTotal * (porcentaje / 100)
-	precioLitro := 12.50 // TODO: obtener de DB
+	precioLitro := getPrecioGasLitro()
 	total := litrosDeseados * precioLitro
 
 	msg := fmt.Sprintf(
@@ -739,8 +765,34 @@ func (sm *StateMachine) handleDireccion(ctx context.Context, telefono, mensaje s
 	}
 	sm.session.PedidoEnCurso.Direccion = mensaje
 
-	// Siguiente paso: confirmar la dirección.
-	return sm.handleConfirmacionDireccion(ctx, telefono, "")
+	// Siguiente paso: geocodificar y confirmar visualmente.
+	lat, lng, err := sm.mapsClient.Geocode(mensaje)
+	if err != nil {
+		// Si falla la geocodificación, marcar para revisión manual y notificar.
+		fmt.Printf("Error de geocodificación: %v\n", err)
+		sm.session.PedidoEnCurso.RequiereRevisionManual = true
+		sm.sender.SendMessage(telefono, "No pudimos verificar tu dirección automáticamente. Un operador la revisará manualmente. Por favor, confirma que la has escrito correctamente.")
+		return sm.handleConfirmacionDireccion(ctx, telefono, "")
+	}
+
+	sm.session.PedidoEnCurso.Latitud = lat
+	sm.session.PedidoEnCurso.Longitud = lng
+
+	// Generar y guardar las URLs de los mapas.
+	mapURL := sm.mapsClient.GenerateStaticMapURL(lat, lng)
+	streetViewURL := sm.mapsClient.GenerateStreetViewURL(lat, lng)
+	sm.session.PedidoEnCurso.MapaURL = mapURL
+	sm.session.PedidoEnCurso.StreetViewURL = streetViewURL
+
+	// Enviar mapa estático y Street View.
+	sm.sender.SendImage(telefono, mapURL, "Ubicación en el mapa.")
+	sm.sender.SendImage(telefono, streetViewURL, "Vista de la calle.")
+
+	// Pedir confirmación visual.
+	msg := "¿Es esta la ubicación correcta?\n1. Sí\n2. No, quiero reintentar."
+	sm.sender.SendMessage(telefono, msg)
+
+	return sm.actualizarEstado(ctx, telefono, EstadoConfirmandoDireccion)
 }
 
 func (sm *StateMachine) handleConfirmacionDireccion(ctx context.Context, telefono, mensaje string) error {
@@ -882,15 +934,49 @@ func (sm *StateMachine) GenerarRutaDiaria(ctx context.Context) {
 		return
 	}
 
-	fmt.Printf("--- CORTE 5:00 AM - RUTA DEL DÍA ---\n")
-	for _, p := range pedidos {
-		fmt.Printf("  - Pedido #%d | Cliente ID: %d | Tipo: %s | Dirección: %s\n", p.ID, p.ClienteID, p.TipoServicio, p.Direccion)
+	// Estructura para la salida JSON.
+	type PuntoDeEntrega struct {
+		PedidoID  int     `json:"pedido_id"`
+		Direccion string  `json:"direccion"`
+		Latitud   float64 `json:"latitud"`
+		Longitud  float64 `json:"longitud"`
 	}
-	fmt.Printf("-------------------------------------\n")
+
+	puntos := make([]PuntoDeEntrega, 0, len(pedidos))
+	for _, p := range pedidos {
+		puntos = append(puntos, PuntoDeEntrega{
+			PedidoID:  p.ID,
+			Direccion: p.Direccion,
+			Latitud:   p.Latitud,
+			Longitud:  p.Longitud,
+		})
+	}
+
+	// Convertir a JSON.
+	jsonData, err := json.MarshalIndent(puntos, "", "  ")
+	if err != nil {
+		fmt.Printf("Error al generar JSON para la ruta: %v\n", err)
+		return
+	}
+
+	// Imprimir el JSON en el log.
+	fmt.Println("--- CORTE 5:00 AM - RUTA DEL DÍA (JSON) ---")
+	fmt.Println(string(jsonData))
+	fmt.Println("-----------------------------------------")
 }
 
 // NotificarLlegadaAPlanta envía un mensaje al cliente informando que su cilindro llegó a la planta.
-func (sm *StateMachine) NotificarLlegadaAPlanta(ctx context.Context, telefono string) error {
+func (sm *StateMachine) NotificarLlegadaAPlanta(ctx context.Context, clienteID int, telefono string) error {
+	pedido, err := sm.store.GetUltimoPedidoActivo(ctx, clienteID)
+	if err != nil || pedido == nil {
+		return fmt.Errorf("no se encontró pedido activo para notificar llegada a planta al cliente %d", clienteID)
+	}
+
+	pedido.Estado = EstadoPedidoEnPlanta
+	if err := sm.store.ActualizarPedido(ctx, pedido); err != nil {
+		return fmt.Errorf("error al actualizar estado del pedido a en_planta: %w", err)
+	}
+
 	msg := "Te confirmamos que tu cilindro ha llegado a nuestra planta para ser recargado."
 	if err := sm.sender.SendMessage(telefono, msg); err != nil {
 		return fmt.Errorf("error al enviar notificación de llegada a planta a %s: %w", telefono, err)
@@ -899,7 +985,17 @@ func (sm *StateMachine) NotificarLlegadaAPlanta(ctx context.Context, telefono st
 }
 
 // NotificarInicioDeRecarga envía un mensaje al cliente informando que su cilindro está siendo rellenado.
-func (sm *StateMachine) NotificarInicioDeRecarga(ctx context.Context, telefono string) error {
+func (sm *StateMachine) NotificarInicioDeRecarga(ctx context.Context, clienteID int, telefono string) error {
+	pedido, err := sm.store.GetUltimoPedidoActivo(ctx, clienteID)
+	if err != nil || pedido == nil {
+		return fmt.Errorf("no se encontró pedido activo para notificar inicio de recarga al cliente %d", clienteID)
+	}
+
+	pedido.Estado = EstadoPedidoEnRecarga
+	if err := sm.store.ActualizarPedido(ctx, pedido); err != nil {
+		return fmt.Errorf("error al actualizar estado del pedido a en_recarga: %w", err)
+	}
+
 	msg := "¡Buenas noticias! Tu cilindro está siendo rellenado en este momento."
 	if err := sm.sender.SendMessage(telefono, msg); err != nil {
 		return fmt.Errorf("error al enviar notificación de inicio de recarga a %s: %w", telefono, err)
@@ -934,7 +1030,17 @@ func (sm *StateMachine) handleEstadoPedido(ctx context.Context, telefono string)
 }
 
 // NotificarPedidoEnRuta envía un mensaje al cliente informando que su pedido está en camino.
-func (sm *StateMachine) NotificarPedidoEnRuta(ctx context.Context, telefono string) error {
+func (sm *StateMachine) NotificarPedidoEnRuta(ctx context.Context, clienteID int, telefono string) error {
+	pedido, err := sm.store.GetUltimoPedidoActivo(ctx, clienteID)
+	if err != nil || pedido == nil {
+		return fmt.Errorf("no se encontró pedido activo para notificar pedido en ruta al cliente %d", clienteID)
+	}
+
+	pedido.Estado = EstadoPedidoEnRuta
+	if err := sm.store.ActualizarPedido(ctx, pedido); err != nil {
+		return fmt.Errorf("error al actualizar estado del pedido a en_ruta: %w", err)
+	}
+
 	msg := "¡Tu pedido va en camino! Nuestro repartidor llegará a tu domicilio en el transcurso del día."
 	if err := sm.sender.SendMessage(telefono, msg); err != nil {
 		return fmt.Errorf("error al enviar notificación de pedido en ruta a %s: %w", telefono, err)
@@ -965,6 +1071,34 @@ func (sm *StateMachine) NotificarAlertaARepartidor(ctx context.Context, telefono
 	// En un sistema real, esto se enviaría a una API del punto de venta.
 	// Por ahora, lo imprimimos en el log del sistema.
 	fmt.Println(logMsg)
+}
+
+func getPrecioGasLitro() float64 {
+	precioStr := os.Getenv("PRECIO_GAS_LITRO")
+	if precioStr == "" {
+		fmt.Println("ADVERTENCIA: La variable de entorno PRECIO_GAS_LITRO no está configurada. Usando precio por defecto de 12.50.")
+		return 12.50
+	}
+
+	precio, err := strconv.ParseFloat(precioStr, 64)
+	if err != nil {
+		fmt.Printf("ADVERTENCIA: Error al parsear PRECIO_GAS_LITRO ('%s'). Usando precio por defecto de 12.50.\n", precioStr)
+		return 12.50
+	}
+
+	return precio
+}
+
+func (sm *StateMachine) getUserMutex(telefono string) *sync.Mutex {
+	sm.mapMutex.Lock()
+	defer sm.mapMutex.Unlock()
+
+	mu, ok := sm.userMutexes[telefono]
+	if !ok {
+		mu = &sync.Mutex{}
+		sm.userMutexes[telefono] = mu
+	}
+	return mu
 }
 
 func (sm *StateMachine) AsignarStrike(ctx context.Context, telefono string) error {

@@ -10,7 +10,13 @@ func (sm *StateMachine) handleConfirmacionFinalPost(ctx context.Context, telefon
 	switch mensaje {
 	case "1": // Sí, confirmar
 		pedido := sm.session.PedidoEnCurso
-		pedido.Estado = "pendiente" // Estado inicial del pedido
+		// Asignar estado inicial según el tipo de servicio.
+		if pedido.TipoServicio == "cilindro_recarga" {
+			pedido.Estado = "pendiente_recoleccion"
+		} else {
+			pedido.Estado = "pendiente"
+		}
+
 		if err := sm.store.CrearPedido(ctx, pedido); err != nil {
 			return fmt.Errorf("error al guardar el pedido en la base de datos: %w", err)
 		}

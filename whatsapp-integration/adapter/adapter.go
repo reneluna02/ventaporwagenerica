@@ -39,6 +39,11 @@ func (m *MockClient) SendMessage(to string, text string) error {
 	return nil
 }
 
+func (m *MockClient) SendImage(to string, imageURL string, caption string) error {
+	log.Printf("[MOCK] Enviando imagen a %s: %s (caption: %s)\n", to, imageURL, caption)
+	return nil
+}
+
 // ----------------- Node.js Script Client -----------------
 
 type NodeScriptClient struct {
@@ -55,5 +60,19 @@ func (n *NodeScriptClient) SendMessage(to string, text string) error {
 		return fmt.Errorf("error ejecutando el script de Node.js: %v\nOutput: %s", err, string(output))
 	}
 	log.Printf("Script de Node.js ejecutado exitosamente para %s. Output: %s\n", to, string(output))
+	return nil
+}
+
+func (n *NodeScriptClient) SendImage(to string, imageURL string, caption string) error {
+	if n.ScriptPath == "" {
+		return errors.New("ruta del script de Node.js no configurada")
+	}
+	// Asumimos que el script de Node.js puede manejar un argumento adicional para el caption.
+	cmd := exec.Command("node", n.ScriptPath, to, imageURL, caption)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("error ejecutando el script de Node.js para enviar imagen: %v\nOutput: %s", err, string(output))
+	}
+	log.Printf("Script de Node.js para imagen ejecutado exitosamente para %s. Output: %s\n", to, string(output))
 	return nil
 }

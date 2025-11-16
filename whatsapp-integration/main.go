@@ -10,6 +10,7 @@ import (
 
 	"example.com/whatsapp-integration/adapter"
 	"example.com/whatsapp-integration/bot"
+	"example.com/whatsapp-integration/maps"
 	"example.com/whatsapp-integration/store"
 )
 
@@ -55,8 +56,14 @@ func main() {
 		waClient = adapter.NewMockClient()
 	}
 
+	// Configurar cliente de mapas
+	mapsClient, err := maps.NewClient()
+	if err != nil {
+		log.Printf("ADVERTENCIA: Cliente de Maps no configurado (%v). La geocodificación no funcionará.\n", err)
+	}
+
 	// Iniciar el bot (máquina de estados)
-	stateMachine := bot.NewStateMachine(dbStore, waClient)
+	stateMachine := bot.NewStateMachine(dbStore, waClient, mapsClient)
 
 	// Configurar rutas del servidor web
 	http.HandleFunc("/webhook", webhookHandler(stateMachine))
@@ -109,10 +116,25 @@ func handleVerification(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleWebhookPost(w http.ResponseWriter, r *http.Request, bot *bot.StateMachine) {
-	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MiB
+	// Leer el cuerpo de la petición una sola vez.
+	bodyBytes, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		log.Printf("Error al leer el cuerpo de la petición: %v\n", err)
+		http.Error(w, "Error interno", http.StatusInternalServerError)
+		return
+	}
+	defer r.Body.Close()
 
+	// Verificar la firma ANTES de procesar nada.
+	if err := verifyMetaSignature(r, bodyBytes); err != nil {
+		log.Printf("Firma del webhook inválida: %v\n", err)
+		http.Error(w, "Firma inválida", http.StatusForbidden)
+		return
+	}
+
+	// Ahora, decodificar el payload.
 	var payload WebhookPayload
-	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+	if err := json.Unmarshal(bodyBytes, &payload); err != nil {
 		log.Printf("Error parseando JSON del webhook: %v\n", err)
 		http.Error(w, "Cuerpo de la petición inválido", http.StatusBadRequest)
 		return
